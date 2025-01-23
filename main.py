@@ -33,19 +33,56 @@ encryption_times = []
 decryption_times = []
 total_times = []
 
+# Add more metric storage
+class Metrics:
+    def __init__(self):
+        self.transmission_times = []
+        self.encryption_times = []
+        self.decryption_times = []
+        self.total_times = []
+        self.clicks_processed = 0
+        self.start_time = time.time()
+
+metrics = Metrics()
+
 def log_system_info():
-    print("\n=== System Information ===")
-    print(f"CPU: {platform.processor()}")
-    print(f"Python Version: {platform.python_version()}")
-    print(f"OS: {platform.system()} {platform.release()}")
-    print(f"CPU Usage: {psutil.cpu_percent()}%")
-    print(f"Memory Usage: {psutil.Process().memory_info().rss / 1024 / 1024:.2f} MB")
+    print("\n=== Memory Info ===")
+    print(f"Usage: {psutil.Process().memory_info().rss / 1024 / 1024:.2f} MB")
     print("========================\n")
 
 def format_coordinates(x, y):
     """Formatiert Mauskoordinaten als 16-Byte-String."""
     coord_str = f"x{int(x):04d}y{int(y):04d}      "  # Enough spaces for 16 total bytes - we need to send exactly 16
     return coord_str
+
+def generate_report():
+    """Generate comprehensive performance report"""
+    runtime = time.time() - metrics.start_time
+    
+    print("\n====== AVG REPORT ======")
+    print(f"Total Runtime: {runtime:.2f} seconds")
+    print(f"Total Clicks Processed: {metrics.clicks_processed}")
+    
+    if metrics.transmission_times:
+        print("\nTransmission Statistics (microseconds):")
+        print(f"  Average: {statistics.mean(metrics.transmission_times):.2f}")
+        print(f"  Min: {min(metrics.transmission_times):.2f}")
+        print(f"  Max: {max(metrics.transmission_times):.2f}")
+    
+    if metrics.decryption_times:
+        print("\nDecryption Statistics (microseconds):")
+        print(f"  Average: {statistics.mean(metrics.decryption_times):.2f}")
+        print(f"  Min: {min(metrics.decryption_times):.2f}")
+        print(f"  Max: {max(metrics.decryption_times):.2f}")
+    
+    if metrics.total_times:
+        print("\nTotal Operation Statistics (microseconds):")
+        print(f"  Average: {statistics.mean(metrics.total_times):.2f}")
+        print(f"  Min: {min(metrics.total_times):.2f}")
+        print(f"  Max: {max(metrics.total_times):.2f}")
+    
+    log_system_info()
+    print("==============================\n")
 
 def decrypt_data(encrypted_hex, click_start_time):
     dec_start = time.perf_counter_ns()
@@ -58,20 +95,26 @@ def decrypt_data(encrypted_hex, click_start_time):
     
     ts = print_timestamp()
     print(f"{ts} = = PYTHON: Decrypting starts.")
-    print(f"{ts} = = PYTHON: Decrypting to {result} succesful (This took: {dec_time:.2f} Microseconds)")
+    print(f"{ts} = = PYTHON: Decrypting to {result} successful (This took: {dec_time:.2f} Microseconds)")
     
     total_time = (dec_end - click_start_time) / 1000
     print(f"\n** Statistics about Mouseclick **")
+    print(f"Time to send coordinates: {send_time:.2f}us")  # Added back
     print(f"TOTAL TIME FOR DECRYPT: {dec_time:.2f}us")
     print(f"TOTAL TIME FROM PLAIN COORDINATES TO RECEIVING THE DECRYPTED DATA IN PYTHON: {total_time:.2f}us")
     print(f"\nThe whole process took: {total_time:.2f}us")
     print(f"\nThis means: whenever you click with your (hardware mouse), it takes {total_time/1000:.2f} MILLISECONDS to get that data captured by the listener, send it to arduino, encrypt it, send it back, decrypt it.\n")
     
+    metrics.decryption_times.append(dec_time)
+    metrics.total_times.append(total_time)
+    metrics.clicks_processed += 1
+    
     return result
 
 def on_click(x, y, button, pressed):
+    global running, send_time
     if not pressed or not running:
-        return False
+        return  # Don't return False, just return
     
     click_start_time = time.perf_counter_ns()
     coord_str = format_coordinates(x, y)
@@ -79,25 +122,53 @@ def on_click(x, y, button, pressed):
     
     print(f"{ts} = = PYTHON: CLICK detected at Coordinates {x} {y} ==")
     
+    # Clear both input and output buffers
+    arduino.reset_input_buffer()
+    arduino.reset_output_buffer()
+    
     send_start = time.perf_counter_ns()
-    arduino.write(coord_str.encode())
-    send_end = time.perf_counter_ns()
-    send_time = (send_end - send_start) / 1000
-    
-    print(f"{ts} = = PYTHON: Sending Coordinates to Arduino (This took: {send_time:.2f} Microseconds) ==")
-    
-    while arduino.in_waiting and running:
-        response = arduino.readline().decode("latin-1", errors="ignore").strip()
-        if response.startswith("ENC_DATA:"):
-            encrypted_hex = response.split(":")[1].strip()
-            ts = print_timestamp()
-            print(f"{ts} = = PYTHON: Received encrypted data: {encrypted_hex} ==")
-            decrypted = decrypt_data(encrypted_hex, click_start_time)
+    try:
+        arduino.write(coord_str.encode())
+        arduino.flush()
+        send_end = time.perf_counter_ns()
+        send_time = (send_end - send_start) / 1000
+        
+        print(f"{ts} = = PYTHON: Sending Coordinates to Arduino (This took: {send_time:.2f} Microseconds) ==")
+        metrics.transmission_times.append(send_time)
+        
+        # Wait for response with timeout
+        response_timeout = time.time() + 2
+        while time.time() < response_timeout and running:
+            if arduino.in_waiting > 0:
+                try:
+                    response = arduino.readline().decode("latin-1", errors="ignore").strip()
+                    if response:  # Only process non-empty responses
+                        print(f"{ts} = = PYTHON: Received raw response: {response}")
+                        
+                        if response.startswith("ENC_DATA:"):
+                            encrypted_hex = response.split(":")[1].strip()
+                            print(f"{ts} = = PYTHON: Received encrypted data: {encrypted_hex} ==")
+                            decrypted = decrypt_data(encrypted_hex, click_start_time)
+                            return  # Just return, don't return False
+                except Exception as e:
+                    print(f"{ts} = = PYTHON: Error reading response: {e}")
+                    continue
+                    
+            time.sleep(0.01)
+            
+        if time.time() >= response_timeout:
+            print(f"{ts} = = PYTHON: ERROR - No response received from Arduino within timeout period")
+            
+    except serial.SerialException as e:
+        print(f"{ts} = = PYTHON: Serial communication error: {e}")
+        running = False
+        return
 
 def on_press(key):
     global running
     if key == keyboard.Key.esc:
-        print("Escape pressed, exiting...")
+        print("Escape pressed, generating final report...")
+        generate_report()
         running = False
         arduino.close()
         return False
@@ -106,8 +177,15 @@ def on_press(key):
 print("Mausklick-Erfassung gestartet. Drücken Sie Strg+C zum Beenden.")
 with mouse.Listener(on_click=on_click) as m_listener, \
      keyboard.Listener(on_press=on_press) as k_listener:
-    while running:
-        time.sleep(0.1)  # my cpu goes crazy if i dont do this
+    try:
+        while running:
+            time.sleep(0.1)
+    except KeyboardInterrupt:
+        print("\nProgram interrupted by user")
+    finally:
+        running = False
+        arduino.close()
+        print("Serial connection closed")
     
 m_listener.stop()
 k_listener.stop()
