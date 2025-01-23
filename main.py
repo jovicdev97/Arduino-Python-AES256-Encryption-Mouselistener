@@ -15,6 +15,9 @@ aes_key = bytes([
 arduino = serial.Serial('COM3', 9600, timeout=1) 
 time.sleep(2)  # Warten auf Arduino-Reset
 
+# Add running flag
+running = True
+
 def format_coordinates(x, y):
     """Formatiert Mauskoordinaten als 16-Byte-String."""
     coord_str = f"x{int(x):04d}y{int(y):04d}      "  # Enough spaces for 16 total bytes - we need to send exactly 16
@@ -28,6 +31,9 @@ def decrypt_data(encrypted_hex):
     return decrypted_data.decode("utf-8", errors="ignore")
 
 def on_click(x, y, button, pressed):
+    global running
+    if not running:
+        return False
     if pressed:
         coord_str = format_coordinates(x, y)
         print(f"Mausklick bei: {x}, {y}")
@@ -53,12 +59,17 @@ def on_click(x, y, button, pressed):
                 print("Could not decode response.")
 
 def on_press(key):
+    global running
     if key == keyboard.Key.esc:
-        print("Escape pressed, exiting.")
+        print("Escape pressed, exiting...")
+        running = False
+        arduino.close() 
         return False
 
 # Listener start
 print("Mausklick-Erfassung gestartet. Drücken Sie Strg+C zum Beenden.")
 with mouse.Listener(on_click=on_click) as m_listener, keyboard.Listener(on_press=on_press) as k_listener:
-    m_listener.join()
-    k_listener.join()
+    while running:
+       time.sleep(0.1) # my cpu goes crazy if i dont do this
+    m_listener.stop()
+    k_listener.stop()
