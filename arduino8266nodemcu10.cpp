@@ -12,6 +12,10 @@ byte aesKey[] = {
 
 AES256 aes;
 
+// Add timing variables
+unsigned long encryptStartTime;
+unsigned long encryptEndTime;
+
 void setup() {
   Serial.begin(9600);
   while (!Serial) {}
@@ -21,7 +25,32 @@ void setup() {
 
 // Funktion zum Verschlüsseln eines 16-Byte Blocks
 void encryptBlock(byte* output, const byte* input) {
+  encryptStartTime = micros();
   aes.encryptBlock(output, input);
+  encryptEndTime = micros();
+  unsigned long encrypt_time = encryptEndTime - encryptStartTime;
+  
+  Serial.print("$ $ ARDUINO: successfully received Coordinates ");
+  for(int i = 0; i < 16; i++) Serial.print((char)input[i]);
+  Serial.println(" $ $");
+  
+  Serial.print("$ $ ARDUINO: Encrypted to ");
+  for (int i = 0; i < 16; i++) {
+    if (output[i] < 16) Serial.print('0');
+    Serial.print(output[i], HEX);
+  }
+  Serial.print(" (This took: ");
+  Serial.print(encrypt_time);
+  Serial.println(" Microseconds) $ $");
+  
+  Serial.println("$ $ ARDUINO: Sending back encrypted data $ $");
+  
+  Serial.print("ENC_DATA:");
+  for (int i = 0; i < 16; i++) {
+    if (output[i] < 16) Serial.print('0');
+    Serial.print(output[i], HEX);
+  }
+  Serial.println();
 }
 
 // Funktion zum Entschlüsseln eines 16-Byte Blocks
@@ -33,16 +62,11 @@ void loop() {
   if (Serial.available() >= 16) {
     byte inputBlock[16];
     byte encrypted[16];
+    
     for (int i = 0; i < 16; i++) {
       inputBlock[i] = (byte)Serial.read();
     }
+    
     encryptBlock(encrypted, inputBlock);
-
-    Serial.print("Verschluesselt: ");
-    for (int i = 0; i < 16; i++) {
-      if (encrypted[i] < 16) Serial.print('0');
-      Serial.print(encrypted[i], HEX);
-    }
-    Serial.println();
   }
 }
