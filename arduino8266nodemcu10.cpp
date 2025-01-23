@@ -12,7 +12,7 @@ byte aesKey[] = {
 
 AES256 aes;
 
-// Add timing variables
+// Timing
 unsigned long encryptStartTime;
 unsigned long encryptEndTime;
 
@@ -23,7 +23,7 @@ void setup() {
   aes.setKey(aesKey, sizeof(aesKey));
 }
 
-// Funktion zum Verschlüsseln eines 16-Byte Blocks
+// Encrypt 16 Byte Block
 void encryptBlock(byte* output, const byte* input) {
   encryptStartTime = micros();
   aes.encryptBlock(output, input);
@@ -53,7 +53,7 @@ void encryptBlock(byte* output, const byte* input) {
   Serial.println();
 }
 
-// Funktion zum Entschlüsseln eines 16-Byte Blocks
+// Decrypt 16 Byte Block
 void decryptBlock(byte* output, const byte* input) {
   aes.decryptBlock(output, input);
 }

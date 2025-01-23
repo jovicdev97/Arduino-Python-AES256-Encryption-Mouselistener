@@ -1,3 +1,6 @@
+import matplotlib
+matplotlib.use('Agg') 
+
 import serial
 import time
 from pynput import mouse, keyboard
@@ -6,11 +9,15 @@ import statistics
 import psutil
 import platform
 from datetime import datetime
+import seaborn as sns
+import matplotlib.pyplot as plt
+import pandas as pd
+import numpy as np
 
 def print_timestamp():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
-# AES256-Schlüssel (muss mit dem Arduino-Sketch übereinstimmen)
+# AES256-Schlüssel (muss mit arduino8266nodemcu10 übereinstimmen)
 aes_key = bytes([
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
     0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
@@ -25,15 +32,14 @@ time.sleep(2)
 print("**Success**")
 print("**Mouse Listener waiting**\n\n")
 
-# Add running flag
+# Running flag
 running = True
 
-# Add timing statistics storage
+# Timing
 encryption_times = []
 decryption_times = []
 total_times = []
 
-# Add more metric storage
 class Metrics:
     def __init__(self):
         self.transmission_times = []
@@ -52,13 +58,14 @@ def log_system_info():
 
 def format_coordinates(x, y):
     """Formatiert Mauskoordinaten als 16-Byte-String."""
-    coord_str = f"x{int(x):04d}y{int(y):04d}      "  # Enough spaces for 16 total bytes - we need to send exactly 16
+    coord_str = f"x{int(x):04d}y{int(y):04d}      "  # we need to send exactly 16 bytes so we add leerzeichen
     return coord_str
 
 def generate_report():
-    """Generate comprehensive performance report"""
+    """Generate comprehensive performance report with visualizations"""
     runtime = time.time() - metrics.start_time
     
+    # Statistics PRINT
     print("\n====== AVG REPORT ======")
     print(f"Total Runtime: {runtime:.2f} seconds")
     print(f"Total Clicks Processed: {metrics.clicks_processed}")
@@ -84,6 +91,46 @@ def generate_report():
     log_system_info()
     print("==============================\n")
 
+    try:
+        if not metrics.total_times:
+            print("No data available for visualization")
+            return
+            
+        plt.style.use('bmh')
+        
+        with plt.style.context('bmh'):
+            fig, ax = plt.subplots(figsize=(10, 6), dpi=100)
+            fig.suptitle('Performance Analysis', fontsize=16)
+
+            sns.histplot(data=metrics.total_times, bins=30, kde=True, ax=ax)
+            ax.set_title('Distribution of Total Operation Times')
+            ax.set_xlabel('Time (microseconds)')
+            ax.set_ylabel('Frequency')
+            
+            mean_time = statistics.mean(metrics.total_times)
+            median_time = statistics.median(metrics.total_times)
+            ax.axvline(mean_time, color='r', linestyle='--', label=f'Mean: {mean_time:.2f}μs')
+            ax.axvline(median_time, color='g', linestyle='--', label=f'Median: {median_time:.2f}μs')
+            ax.legend()
+
+            plt.tight_layout()
+            
+            # File save
+            try:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                plot_filename = f'performance_metrics_{timestamp}.png'
+                fig.savefig(plot_filename, bbox_inches='tight', dpi=100)
+                print(f"\nPerformance visualization saved as: {plot_filename}")
+            except Exception as e:
+                print(f"\nError saving plot: {e}")
+            finally:
+                plt.close(fig)  
+                plt.close('all') 
+                
+    except Exception as e:
+        print(f"\nError generating visualization: {e}")
+        plt.close('all') 
+
 def decrypt_data(encrypted_hex, click_start_time):
     dec_start = time.perf_counter_ns()
     encrypted_data = bytes.fromhex(encrypted_hex)
@@ -91,7 +138,7 @@ def decrypt_data(encrypted_hex, click_start_time):
     decrypted_data = cipher.decrypt(encrypted_data)
     result = decrypted_data.decode("utf-8", errors="ignore")
     dec_end = time.perf_counter_ns()
-    dec_time = (dec_end - dec_start) / 1000  # to microseconds
+    dec_time = (dec_end - dec_start) / 1000
     
     ts = print_timestamp()
     print(f"{ts} = = PYTHON: Decrypting starts.")
@@ -99,7 +146,7 @@ def decrypt_data(encrypted_hex, click_start_time):
     
     total_time = (dec_end - click_start_time) / 1000
     print(f"\n** Statistics about Mouseclick **")
-    print(f"Time to send coordinates: {send_time:.2f}us")  # Added back
+    print(f"Time to send coordinates: {send_time:.2f}us")
     print(f"TOTAL TIME FOR DECRYPT: {dec_time:.2f}us")
     print(f"TOTAL TIME FROM PLAIN COORDINATES TO RECEIVING THE DECRYPTED DATA IN PYTHON: {total_time:.2f}us")
     print(f"\nThe whole process took: {total_time:.2f}us")
@@ -114,7 +161,7 @@ def decrypt_data(encrypted_hex, click_start_time):
 def on_click(x, y, button, pressed):
     global running, send_time
     if not pressed or not running:
-        return  # Don't return False, just return
+        return
     
     click_start_time = time.perf_counter_ns()
     coord_str = format_coordinates(x, y)
@@ -122,7 +169,7 @@ def on_click(x, y, button, pressed):
     
     print(f"{ts} = = PYTHON: CLICK detected at Coordinates {x} {y} ==")
     
-    # Clear both input and output buffers
+    # Reset Buffer after clcik
     arduino.reset_input_buffer()
     arduino.reset_output_buffer()
     
@@ -136,20 +183,20 @@ def on_click(x, y, button, pressed):
         print(f"{ts} = = PYTHON: Sending Coordinates to Arduino (This took: {send_time:.2f} Microseconds) ==")
         metrics.transmission_times.append(send_time)
         
-        # Wait for response with timeout
+        # Wait for response
         response_timeout = time.time() + 2
         while time.time() < response_timeout and running:
             if arduino.in_waiting > 0:
                 try:
                     response = arduino.readline().decode("latin-1", errors="ignore").strip()
-                    if response:  # Only process non-empty responses
+                    if response:
                         print(f"{ts} = = PYTHON: Received raw response: {response}")
                         
                         if response.startswith("ENC_DATA:"):
                             encrypted_hex = response.split(":")[1].strip()
                             print(f"{ts} = = PYTHON: Received encrypted data: {encrypted_hex} ==")
                             decrypted = decrypt_data(encrypted_hex, click_start_time)
-                            return  # Just return, don't return False
+                            return 
                 except Exception as e:
                     print(f"{ts} = = PYTHON: Error reading response: {e}")
                     continue
@@ -171,6 +218,7 @@ def on_press(key):
         generate_report()
         running = False
         arduino.close()
+        plt.close('all') 
         return False
 
 # Listener start
